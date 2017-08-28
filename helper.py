@@ -9,16 +9,15 @@ from PIL import ImageDraw
 from PIL import ImageFont
 
 
-# # Copies one set of variables to another.
-# # Used to set worker network parameters to those of global network.
-# def update_target_graph(from_scope,to_scope):
-#     from_vars = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, from_scope)
-#     to_vars = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, to_scope)
-#
-#     op_holder = []
-#     for from_var,to_var in zip(from_vars,to_vars):
-#         op_holder.append(to_var.assign(from_var))
-#     return op_holder
+def ensure_dir(file_path):
+    '''
+    Used to ensure to create the a directory when needed
+    :param file_path: path to the file that we want to create
+    '''
+    directory = os.path.dirname(file_path)
+    if not os.path.exists(directory):
+        os.makedirs(directory)
+    return file_path
 #
 # #Used to initialize weights for policy and value output layers
 # def normalized_columns_initializer(std=1.0):
@@ -27,6 +26,43 @@ from PIL import ImageFont
 #         out *= std / np.sqrt(np.square(out).sum(axis=0, keepdims=True))
 #         return tf.constant(out)
 #     return _initializer
+
+
+class RingBuffer():
+    """
+    TO-TEST: test the sampling procedure
+    """
+    def __init__(self, length):
+        self.buffer = np.zeros(length, dtype='f')
+        self.index = 0
+
+    def extend(self, x):
+        "adds array x to ring buffer"
+        x_index = (self.index + np.arange(x.size)) % self.buffer.size
+        self.buffer[x_index] = x
+        self.index = x_index[-1] + 1
+
+    def sample(self, size):
+        return np.random.choice(self.buffer, size)
+
+
+class ExperienceBuffer():
+    def __init__(self, buffer_size=50000):
+        '''
+        store a history of experiences that can be randomly drawn from when training the network. We can draw form the
+        previous past experiment to learn
+        :param buffer_size: size of the buffer
+        '''
+        self.buffer = []
+        self.buffer_size = buffer_size
+
+    def add(self, experience):
+        if len(list(self.buffer)) + len(list(experience)) >= self.buffer_size:
+            self.buffer[0:(len(list(experience)) + len(list(self.buffer))) - self.buffer_size] = []
+        self.buffer.extend(experience)
+
+    def sample(self, size):
+        return np.reshape(np.array(random.sample(self.buffer, size)), [size, 5])
 
 def set_image_gridworld(frame,measurements,step,goal,hero):
     b = np.ones([840,640,3]) * 255.0

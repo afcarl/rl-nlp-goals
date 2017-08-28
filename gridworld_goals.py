@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 
 
 class gameOb():
-    def __init__(self,coordinates,size,color,reward,name):
+    def __init__(self, coordinates, size, color, reward, name):
         '''
         Generate an object to add at the envirments
         :param coordinates: initial position of the obj
@@ -24,18 +24,20 @@ class gameOb():
         self.name = name
 
 class gameEnv():
-    def __init__(self,partial,size):
+    def __init__(self, partial, env_size, a_size):
         '''
         Set the games enviroments
         :param partial: if using or not using the padding
-        :param size: size of the envoriments (matrix x-by-x)
+        :param env_size: size of the envoriments (matrix x-by-x)
+        :param a_size: action size
         '''
-        self.sizeX = size
-        self.sizeY = size
-        self.actions = 4
+        self.sizeX = env_size
+        self.sizeY = env_size
+        self.actions_size = a_size
+        assert self.actions_size <= 4
         self.objects = []
         self.partial = partial
-        self.bg = np.zeros([size,size])
+        self.bg = np.zeros([env_size, env_size])                    # battle-ground used for the game
         a, a_big, measurements, goal, hero = self.reset()
 
 
@@ -66,9 +68,9 @@ class gameEnv():
         self.goal = bug
         state, s_big = self.renderEnv()
         self.state = state
-        return state,s_big,self.measurements,[self.goal.x,self.goal.y],[self.hero.x,self.hero.y]
+        return state, s_big, self.measurements, [self.goal.x, self.goal.y], [self.hero.x, self.hero.y]
 
-    def moveChar(self,action):
+    def moveChar(self, action):
         '''
         there are 6 actions:
         - 0 - up
@@ -88,7 +90,7 @@ class gameEnv():
         hero_x = hero.x
         hero_y = hero.y
         penalize = 0.
-        if action < 4:
+        if action < self.actions_size:
             if self.orientation == 0:
                 direction = action
             if self.orientation == 1:
@@ -122,10 +124,9 @@ class gameEnv():
         self.hero = hero
         return penalize
 
-    def newPosition(self, sparcity):
+    def newPosition(self):
         '''
         get a new empty position
-        :param sparcity:
         '''
         iterables = [range(self.sizeX), range(self.sizeY)]
         points = []
@@ -134,7 +135,7 @@ class gameEnv():
         for obj in self.objects:                            # remove the occupied one
             if (obj.x, obj.y) in points:
                 points.remove((obj.x, obj.y))
-        location = np.random.choice(range(len(points)),replace=False)
+        location = np.random.choice(range(len(points)), replace=False)
         return points[location]
 
     def checkGoal(self):
@@ -193,14 +194,14 @@ class gameEnv():
         a_big = scipy.misc.imresize(a_big,[32,32,3],interp='nearest')
         return a, a_big
 
-    def step(self,action):
+    def step(self, action):
         '''
         execute one step
         :param action: action to execute
         :return: env, env_image, reward obtained, position of the goal, position of the hero
         '''
         if self.objects != []:
-            penalty = self.moveChar(action)
+            penalty = self.moveChar(action)     # move the hero
         reward, done = self.checkGoal()
         self.measurements[1] -= 0.025           # decrease the battery
         if self.measurements[1] <= 0:
