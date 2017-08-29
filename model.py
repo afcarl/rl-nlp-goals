@@ -34,6 +34,7 @@ class DFP_Network(nn.Module):
         self.num_measurements = num_measurements
         self.action_size = a_size
         self.num_offsets = num_offset
+        self.observation_i_size = observation_i_size
 
         self.hidden_o = FullyConnected(observation_i_size, observation_h_size, activation_fn=F.elu)       # predict the observation -> [batch_size,128]
         self.hidden_m = FullyConnected(num_measurements, measurements_h_size, activation_fn=F.elu)      # predict the measurements -> [batch_size,64]
@@ -47,6 +48,7 @@ class DFP_Network(nn.Module):
         self.hidden_e = FullyConnected(j_h_size, f_h_size)                           # predict the future measurements over all potential actions form the joint vector
         self.hidden_a = FullyConnected(j_h_size, wf_h_size)                          # predict the action-conditional differences {Ai(j)}, which are then combined to produce the final prediction for each action
         self.is_master = is_master
+
         if self.is_master:
             self.episodes = 0
 
@@ -75,9 +77,9 @@ class DFP_Network(nn.Module):
         :return:
         '''
         # temperature = dtype(temperature)
-        observation_flat = Variable(dtype(observation))
+        observation_flat = Variable(dtype(observation.reshape(-1, self.observation_i_size)))
         measurements = Variable(dtype(measurements))
-        goals = Variable(goals)
+        goals = Variable(dtype(goals))
 
         # hidden input for the expectaion and action prediction
         hidden_input = torch.cat([self.hidden_o(observation_flat),
@@ -87,19 +89,19 @@ class DFP_Network(nn.Module):
         hidden_j = F.elu(self.hidden_j(hidden_input))
 
         # average of the future measurements over all potential actions
-        expectation = self.hidden_e(hidden_j)
-        expectation = expectation.repeat(1, self.action_size)
+        self.expectation = self.hidden_e(hidden_j)
+        self.expectation = self.expectation.repeat(1, self.action_size)
 
-        advantages = self.hidden_a(hidden_j)
-        advantages = advantages - torch.mean(advantages, dim=1, keepdim=True)
+        self.advantages = self.hidden_a(hidden_j)
+        self.advantages = self.advantages - torch.mean(self.advantages, dim=1, keepdim=True)
 
-        prediction = expectation + advantages
+        self.prediction = self.expectation + self.advantages
         # Reshape the predictions to be  [measurements x actions x offsets]
-        prediction = prediction.view(-1, self.num_measurements, self.action_size, self.num_offsets)
-        boltzmann = softmax(torch.sum(prediction, dim=3)/temperature, axis=-1)
+        self.prediction = self.prediction.view(-1, self.num_measurements, self.action_size, self.num_offsets)
+        self.boltzmann = softmax(torch.sum(self.prediction, dim=3)/temperature, axis=-1)
         # prediction = nn.Softmax(torch.sum(prediction, dim=3))
 
-        return boltzmann
+        return self.boltzmann
 
     def loss(self, actions, targets):
         '''
@@ -108,13 +110,14 @@ class DFP_Network(nn.Module):
         :param targets: changes in the measurements
         :return:
         '''
-        actions_one_hot = dtype(np.eye(self.action_size)[actions])
+        self.actions_one_hot = Variable(dtype(np.eye(self.action_size)[actions.astype(np.int32)]))
+        self.targets = Variable(dtype(targets))
         # Select the predictions relevant to the chosen action.
-        pred_action = torch.sum(self.prediction * actions_one_hot.view([-1, 1, self.action_size, 1]), dim=2)
+        self.pred_action = torch.sum(self.prediction * self.actions_one_hot.view([-1, 1, self.action_size, 1]), dim=2)
 
-        # Loss function
-        loss = nn.MSELoss(pred_action, targets)
+
+        self.dps_loss = F.mse_loss(self.pred_action, self.targets, size_average=True)
 
         # Sparsity of the action distribution
-        entropy = -torch.sum(self.boltzmann * torch.log(self.boltzmann + 1e-7))
-        return loss, entropy
+        self.entropy = -torch.sum(self.boltzmann * torch.log(self.boltzmann + 1e-7))
+        return self.dps_loss, self.entropy

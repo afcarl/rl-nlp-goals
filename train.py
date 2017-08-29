@@ -13,7 +13,7 @@ import imageio
 from pycrayon import CrayonClient
 
 cc = CrayonClient(hostname="localhost")
-
+EXP_NAME = "exp-{}".format(datetime.now())
 
 def get_f(m, offsets):
     '''
@@ -43,13 +43,14 @@ def ensure_shared_grads(model, shared_model):
             return
         shared_param._grad = param.grad
 
-def train(episode_buffer, exp_buffer, local_net, master_net, offsets, optimizer, batch_size, max_grad_norm):
+def train(episode_buffer, exp_buffer, local_net, master_net, action_space, offsets, optimizer, batch_size, max_grad_norm):
     '''
     execute one optimizing step based on the experience accumulated
     :param episode_buffer: episode history
     :param exp_buffer: expierence history
     :param local_net: local network used to predict the measurements
     :param master_net: master network used to update the gradient
+    :param action_space: space of the action that an agent can take
     :param offsets: offsets used during temporal difference prediction
     :param optimizer: optimizer used
     :param batch_size: batch size
@@ -59,15 +60,15 @@ def train(episode_buffer, exp_buffer, local_net, master_net, offsets, optimizer,
     episode_buffer = np.array(episode_buffer)
     measurements = np.vstack(episode_buffer[:, 2])
     targets = get_f(measurements, offsets)               # Generate targets using measurements and offsets
-    episode_buffer[:, local_net.action_size] = zip(targets)            # Teach to the network to predict the change in the measurements
-    exp_buffer.add(zip(episode_buffer))
+    episode_buffer[:, action_space] = list(zip(targets))            # Teach to the network to predict the change in the measurements
+    exp_buffer.add(list(zip(episode_buffer)))
 
     # Get a batch of experiences from the buffer and use them to update the global network
     if len(exp_buffer.buffer) > batch_size:
         exp_batch = exp_buffer.sample(batch_size)
         obeservation_ = np.stack(exp_batch[:, 0], axis=0)
         measurements_ = np.vstack(exp_batch[:, 2])
-        temperature_ = [0.1]
+        temperature_ = 0.1
         action_ = exp_batch[:, 1]
         target_ = np.vstack(exp_batch[:, 4])
         goal_ = np.vstack(exp_batch[:, 3])
@@ -85,13 +86,16 @@ def train(episode_buffer, exp_buffer, local_net, master_net, offsets, optimizer,
         return 0, 0
 
 
-def work(rank, args, master_net, exp_buffer, optimizer=None):
+def work(rank, args, master_net, optimizer=None):
     torch.manual_seed(args.seed + rank)
+    summary_file = path_join(args.model_path, EXP_NAME + "_{}".format(rank))
+    summary = cc.create_experiment(helper.ensure_dir(summary_file))
 
+    exp_buff = helper.ExperienceBuffer()
     episodes = master_net.episodes
     episode_deliveries = []
     episode_lengths = []
-    episode_mean_values = []
+    # episode_mean_values = []
 
     # Create the local copy of the network
     env = gameEnv(args.partial, args.env_size, args.action_space)
@@ -124,18 +128,17 @@ def work(rank, args, master_net, exp_buffer, optimizer=None):
             # When the battery charge is below 0.3, we set the goal to optimize battery
             # When the charge is above that value we set the goal to optimize deliveries
             if measurements[1] <= .3:
-                goal = torch.FloatTensor([[0., 1.]])
+                goal = np.array([[0., 1.]])
             else:
-                goal = torch.FloatTensor([[1., 0.]])                                      # goal [go for delivery, go for battery]
+                goal = np.array([[1., 0.]])                                      # goal [go for delivery, go for battery]
 
-            action_dist = local_net.forward(np.expand_dims(observation.flatten(), 0),
+            action_dist = local_net.forward(np.expand_dims(observation, 0),
                                             np.expand_dims(measurements, 0),
                                             goal, temp)
 
-            b = torch.squeeze(goal) * torch.transpose(torch.squeeze(action_dist.data), 0, 1)
-            c = torch.sum(b, dim=1)
+            b = np.squeeze(goal, axis=0) * np.squeeze(action_dist.data.numpy(), axis=0).T
+            c = np.sum(b, axis=1)
             c /= c.sum()
-            c = c.numpy()
 
             # Choose greedy action
             action = np.random.choice(c, p=c)
@@ -163,10 +166,11 @@ def work(rank, args, master_net, exp_buffer, optimizer=None):
         episode_lengths.append(step)
 
         # Update the network using the experience buffer at the end of the episode.
-        if train:
-            loss, entropy = train(episode_buffer, exp_buffer,
+        if args.train:
+            loss, entropy = train(episode_buffer, exp_buff,
                                   local_net=local_net,
                                   master_net=master_net,
+                                  action_space=args.action_space,
                                   offsets=args.offset,
                                   optimizer=optimizer,
                                   batch_size=args.batch_size,
@@ -187,20 +191,17 @@ def work(rank, args, master_net, exp_buffer, optimizer=None):
 
             mean_deliveries = np.mean(episode_deliveries[-50:])
             mean_length = np.mean(episode_lengths[-50:])
-            mean_value = np.mean(episode_mean_values[-50:])
+            # mean_value = np.mean(episode_mean_values[-50:])
 
-            summary_file = path_join(args.model_path, "exp-{}".format(datetime.now()))
-            summary = cc.create_experiment(helper.ensure_dir(summary_file))
+            summary.add_scalar_value('Performance/Deliveries_{}'.format(rank), float(mean_deliveries))
+            summary.add_scalar_value('Performance/Length_{}'.format(rank), float(mean_length))
+            # summary.add_scalar_value('Performance/Mean-{}'.format(rank), float(mean_value))
+            summary.add_scalar_value('Check/episode_{}'.format(rank), episodes)
+            summary.add_scalar_value('Check/master_episode_{}'.format(rank), master_net.episodes)
 
-            summary.add_scalar_value('Performance/Deliveries', float(mean_deliveries))
-            summary.add_scalar_value('Performance/Length', float(mean_length))
-            summary.add_scalar_value('Performance/Mean', float(mean_value))
-            summary.add_scalar_value('Check/episode', episodes)
-            summary.add_scalar_value('Check/master_episode', master_net.episodes)
-
-            if train == True:
-                summary.add_scalar_value('Losses/Loss', simple_value=float(loss))
-                summary.add_scalar_value('Losses/Entory', simple_value=float(entropy))
+            if args.train:
+                summary.add_scalar_value('Losses/Loss_{}'.format(rank), float(loss.data.numpy()))
+                summary.add_scalar_value('Losses/Entory_{}'.format(rank), float(entropy.data.numpy()))
 
         episodes += 1
         master_net.episodes += 1

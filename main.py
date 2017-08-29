@@ -39,7 +39,6 @@ def __pars_args__():
     return parser.parse_args()
 
 if __name__ == '__main__':
-    exp_buff = helper.ExperienceBuffer()
     args = __pars_args__()
 
     master_net = DFP_Network((args.env_size**2)*3,                          # observation_size = (args.env_size*args.env_size)*3 = battel_ground*colors
@@ -56,7 +55,7 @@ if __name__ == '__main__':
 
     # for rank in range(0, args.num_processes):
     for rank in range(0, 1):
-        p = mp.Process(target=work, args=(rank, args, master_net, exp_buff, None))
+        p = mp.Process(target=work, args=(rank, args, master_net, None))
         p.start()
         processes.append(p)
 
