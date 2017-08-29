@@ -54,7 +54,7 @@ class gameEnv():
         '''
         self.objects = []
         self.orientation = 0
-        self.hero = gameOb(self.newPosition(0), 1, [1, 1, 1], None, 'hero')     # added the dron
+        self.hero = gameOb(self.newPosition(), 1, [1, 1, 1], None, 'hero')     # added the dron
 
         self.measurements = [0.0, 1.0]                                          # reset the measurements (expression of the goal)
 
@@ -63,7 +63,7 @@ class gameEnv():
         self.battery = battery
         self.objects.append(battery)
         for i in range(1):
-            bug = gameOb(self.newPosition(0), 1, [0, 1, 0], 1, 'goal')          # generate a delivery position
+            bug = gameOb(self.newPosition(), 1, [0, 1, 0], 1, 'goal')          # generate a delivery position
             self.objects.append(bug)
         self.goal = bug
         state, s_big = self.renderEnv()
@@ -109,9 +109,9 @@ class gameEnv():
                 elif action == 2: direction = 1
                 elif action == 3: direction = 0
 
-            if direction == 0 and hero.y >= 1 and [hero.x,hero.y - 1] not in blockPositions.tolist():
+            if direction == 0 and hero.y >= 1 and [hero.x, hero.y - 1] not in blockPositions.tolist():
                 hero.y -= 1
-            if direction == 1 and hero.y <= self.sizeY-2 and [hero.x,hero.y + 1] not in blockPositions.tolist():
+            if direction == 1 and hero.y <= self.sizeY-2 and [hero.x, hero.y + 1] not in blockPositions.tolist():
                 hero.y += 1
             if direction == 2 and hero.x >= 1 and [hero.x - 1,hero.y] not in blockPositions.tolist():
                 hero.x -= 1
@@ -152,13 +152,13 @@ class gameEnv():
                     self.objects.remove(other)
                     ended == True
                     if other.name == 'goal':
-                        goal = gameOb(self.newPosition(0), 1, [0, 1, 0], 1, 'goal')
+                        goal = gameOb(self.newPosition(), 1, [0, 1, 0], 1, 'goal')
                         self.objects.append(goal)
                         self.goal = goal
                         self.measurements[0] += 1
                         return other.reward, False
                     if other.name == 'battery':
-                        battery = gameOb([0,0], 1, [0, 0, 1], 1, 'battery')
+                        battery = gameOb([0, 0], 1, [0, 0, 1], 1, 'battery')
                         self.objects.append(battery)
                         self.battery = battery
                         self.measurements[1] = 1.0

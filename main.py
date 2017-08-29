@@ -31,9 +31,9 @@ def __pars_args__():
 
 
     parser.add_argument('-m_path', '--model_path', default='./model_goals', help='Path to save the model')
-    parser.add_argument('g_path', '--gif_path', default='./frames_goals', help='Path to save gifs of agent performance')
+    parser.add_argument('-g_path', '--gif_path', default='./frames_goals', help='Path to save gifs of agent performance')
 
-    parser.add_argument('--partial', default=True, help='if we want to use a partial enviroments')
+    parser.add_argument('--partial', default=False, help='if we want to use a partial enviroments')
     parser.add_argument('--env_size', type=int, default=5, help='size of our enviroments')
 
     return parser.parse_args()
@@ -42,7 +42,11 @@ if __name__ == '__main__':
     exp_buff = helper.ExperienceBuffer()
     args = __pars_args__()
 
-    master_net = DFP_Network(args.batch_size, args.offset, args.action_sapce, args.num_measurements, is_master=True)
+    master_net = DFP_Network((args.env_size**2)*3,                          # observation_size = (args.env_size*args.env_size)*3 = battel_ground*colors
+                             num_offset=len(args.offset),
+                             a_size=args.action_space,
+                             num_measurements=args.num_measurements,
+                             is_master=True)
     master_net.share_memory()
 
     processes = []
@@ -50,7 +54,8 @@ if __name__ == '__main__':
     # p.start()
     # processes.append(p)
 
-    for rank in range(0, args.num_processes):
+    # for rank in range(0, args.num_processes):
+    for rank in range(0, 1):
         p = mp.Process(target=work, args=(rank, args, master_net, exp_buff, None))
         p.start()
         processes.append(p)

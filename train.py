@@ -43,7 +43,7 @@ def ensure_shared_grads(model, shared_model):
             return
         shared_param._grad = param.grad
 
-def train(episode_buffer, exp_buffer, local_net, master_net, offsets, optimizer, max_grad_norm):
+def train(episode_buffer, exp_buffer, local_net, master_net, offsets, optimizer, batch_size, max_grad_norm):
     '''
     execute one optimizing step based on the experience accumulated
     :param episode_buffer: episode history
@@ -52,6 +52,7 @@ def train(episode_buffer, exp_buffer, local_net, master_net, offsets, optimizer,
     :param master_net: master network used to update the gradient
     :param offsets: offsets used during temporal difference prediction
     :param optimizer: optimizer used
+    :param batch_size: batch size
     :param max_grad_norm: max value of the gradient
     :return: loss and entropy
     '''
@@ -62,8 +63,8 @@ def train(episode_buffer, exp_buffer, local_net, master_net, offsets, optimizer,
     exp_buffer.add(zip(episode_buffer))
 
     # Get a batch of experiences from the buffer and use them to update the global network
-    if len(exp_buffer.buffer) > local_net.batch_size:
-        exp_batch = exp_buffer.sample(local_net.batch_size)
+    if len(exp_buffer.buffer) > batch_size:
+        exp_batch = exp_buffer.sample(batch_size)
         obeservation_ = np.stack(exp_batch[:, 0], axis=0)
         measurements_ = np.vstack(exp_batch[:, 2])
         temperature_ = [0.1]
@@ -94,10 +95,10 @@ def work(rank, args, master_net, exp_buffer, optimizer=None):
 
     # Create the local copy of the network
     env = gameEnv(args.partial, args.env_size, args.action_space)
-    local_net = DFP_Network(args.batch_szie,
-                            num_offsets=args.num_offset,
-                            a_size=args.action_space,
-                            num_measurements=args.num_measurements)
+    local_net = DFP_Network((args.env_size**2)*3,                          # observation_size = (args.env_size*args.env_size)*3 = battel_ground*colors
+                             num_offset=len(args.offset),
+                             a_size=args.action_space,
+                             num_measurements=args.num_measurements)
     assert args.num_measurements == len(env.measurements)
 
 
@@ -107,8 +108,8 @@ def work(rank, args, master_net, exp_buffer, optimizer=None):
 
     print("Starting work on worker-{}".format(rank))
 
-    while not master_net.shoud_stop():
-        local_net.load_state_dict(master_net.local_net.state_dict())         # Copy parameters from global to local network
+    while not master_net.should_stop():
+        local_net.load_state_dict(master_net.state_dict())         # Copy parameters from global to local network
         episode_buffer = []
         episode_frames = []
         done = False
@@ -116,22 +117,25 @@ def work(rank, args, master_net, exp_buffer, optimizer=None):
         temp = 0.25  # How spread out we want our action distribution to be
 
         observation, o_big, measurements, delivery_pos, drone_pos = env.reset()
-        the_measurements = measurements
+        the_measurements = measurements                                         # measuremeents [number delivery, battery life]
         while not done:
 
             # Here is where our goal-switching takes place
             # When the battery charge is below 0.3, we set the goal to optimize battery
             # When the charge is above that value we set the goal to optimize deliveries
             if measurements[1] <= .3:
-                goal = np.array([0.0, 1.0])
+                goal = torch.FloatTensor([[0., 1.]])
             else:
-                goal = np.array([1.0, 0.0])
+                goal = torch.FloatTensor([[1., 0.]])                                      # goal [go for delivery, go for battery]
 
-            action_dist = local_net.forward(observation, measurements, goal, temp)
+            action_dist = local_net.forward(np.expand_dims(observation.flatten(), 0),
+                                            np.expand_dims(measurements, 0),
+                                            goal, temp)
 
-            b = goal * torch.transpose(action_dist, 0, 1)
-            c = np.sum(b, 1)
+            b = torch.squeeze(goal) * torch.transpose(torch.squeeze(action_dist.data), 0, 1)
+            c = torch.sum(b, dim=1)
             c /= c.sum()
+            c = c.numpy()
 
             # Choose greedy action
             action = np.random.choice(c, p=c)
@@ -139,7 +143,7 @@ def work(rank, args, master_net, exp_buffer, optimizer=None):
 
             observation_new, o_new_big, measurements_new, delivery_pos_new, drone_pos_new, done = env.step(action)
             episode_buffer.append([observation, action, np.array(measurements), goal,
-                                   np.zeros(len(args.num_offsets))])
+                                   np.zeros(len(args.offset))])
 
             if rank == 0 and master_net.episodes % 150 == 0:
                 episode_frames.append(helper.set_image_gridworld(o_new_big, measurements_new, step + 1,
@@ -163,18 +167,19 @@ def work(rank, args, master_net, exp_buffer, optimizer=None):
             loss, entropy = train(episode_buffer, exp_buffer,
                                   local_net=local_net,
                                   master_net=master_net,
-                                  offsets=args.offsets,
+                                  offsets=args.offset,
                                   optimizer=optimizer,
+                                  batch_size=args.batch_size,
                                   max_grad_norm=args.max_grad_norm)
 
         # Periodically save gifs of episodes, model parameters, and summary statistics.
         if episodes % 50 == 0 and episodes != 0:
-            if episodes % 2000 == 0 and rank == 0 and train:
+            if master_net.episodes % 2000 == 0 and rank == 0 and train:
                 model_file = path_join(args.model_path, 'model-{}.cptk'.format(episodes))
                 torch.save(master_net.state_dict(), helper.ensure_dir(model_file))
                 print("Saved Model")
 
-            if rank == 0 and episodes % 150 == 0:
+            if rank == 0 and master_net.episodes % 150 == 0:
                 time_per_step = 0.25
                 images = np.array(episode_frames)
                 image_file = path_join(args.gif_path + '/image-{}.gif'.format(episodes))
@@ -185,10 +190,13 @@ def work(rank, args, master_net, exp_buffer, optimizer=None):
             mean_value = np.mean(episode_mean_values[-50:])
 
             summary_file = path_join(args.model_path, "exp-{}".format(datetime.now()))
-            summary = cc.get_experiment_names(helper.ensure_dir(summary_file))
+            summary = cc.create_experiment(helper.ensure_dir(summary_file))
+
             summary.add_scalar_value('Performance/Deliveries', float(mean_deliveries))
             summary.add_scalar_value('Performance/Length', float(mean_length))
             summary.add_scalar_value('Performance/Mean', float(mean_value))
+            summary.add_scalar_value('Check/episode', episodes)
+            summary.add_scalar_value('Check/master_episode', master_net.episodes)
 
             if train == True:
                 summary.add_scalar_value('Losses/Loss', simple_value=float(loss))
