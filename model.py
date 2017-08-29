@@ -36,19 +36,22 @@ class DFP_Network(nn.Module):
         self.num_offsets = num_offset
         self.observation_i_size = observation_i_size
 
-        self.hidden_o = FullyConnected(observation_i_size, observation_h_size, activation_fn=F.elu)       # predict the observation -> [batch_size,128]
-        self.hidden_m = FullyConnected(num_measurements, measurements_h_size, activation_fn=F.elu)      # predict the measurements -> [batch_size,64]
-        self.hidden_g = FullyConnected(num_measurements, goal_h_size, activation_fn=F.elu)              # predict the goal -> [batch_size,64]
+        self.hidden_o = FullyConnected(observation_i_size, observation_h_size, activation_fn=F.elu, dtype=dtype)       # predict the observation -> [batch_size,128]
+        self.hidden_m = FullyConnected(num_measurements, measurements_h_size, activation_fn=F.elu, dtype=dtype)      # predict the measurements -> [batch_size,64]
+        self.hidden_g = FullyConnected(num_measurements, goal_h_size, activation_fn=F.elu, dtype=dtype)              # predict the goal -> [batch_size,64]
 
         j_h_size = (observation_h_size + measurements_h_size + goal_h_size)
         f_h_size = (self.num_offsets * self.num_measurements)
         wf_h_size = (self.action_size * self.num_offsets * self.num_measurements)
 
-        self.hidden_j = FullyConnected(j_h_size, j_h_size, activation_fn=F.elu)                   # predict the joint-vectorial input -> [?,256]
-        self.hidden_e = FullyConnected(j_h_size, f_h_size)                           # predict the future measurements over all potential actions form the joint vector
-        self.hidden_a = FullyConnected(j_h_size, wf_h_size)                          # predict the action-conditional differences {Ai(j)}, which are then combined to produce the final prediction for each action
-        self.is_master = is_master
+        self.hidden_j = FullyConnected(j_h_size, j_h_size, activation_fn=F.elu, dtype=dtype)                   # predict the joint-vectorial input -> [?,256]
+        self.hidden_e = FullyConnected(j_h_size, f_h_size, dtype=dtype)                           # predict the future measurements over all potential actions form the joint vector
+        self.hidden_a = FullyConnected(j_h_size, wf_h_size, dtype=dtype)                          # predict the action-conditional differences {Ai(j)}, which are then combined to produce the final prediction for each action
 
+        self.apply(weights_init)
+
+
+        self.is_master = is_master
         if self.is_master:
             self.episodes = 0
 

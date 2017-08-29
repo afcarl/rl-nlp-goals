@@ -10,9 +10,7 @@ from os.path import join as path_join
 from gridworld_goals import gameEnv, gameOb
 from model import DFP_Network
 import imageio
-from pycrayon import CrayonClient
 
-cc = CrayonClient(hostname="localhost")
 EXP_NAME = "exp-{}".format(datetime.now())
 
 def get_f(m, offsets):
@@ -86,10 +84,12 @@ def train(episode_buffer, exp_buffer, local_net, master_net, action_space, offse
         return 0, 0
 
 
-def work(rank, args, master_net, optimizer=None):
+def work(rank, args, master_net, cc, optimizer=None):
     torch.manual_seed(args.seed + rank)
+
     summary_file = path_join(args.model_path, EXP_NAME + "_{}".format(rank))
     summary = cc.create_experiment(helper.ensure_dir(summary_file))
+    summary.to_zip(summary_file)
 
     exp_buff = helper.ExperienceBuffer()
     episodes = master_net.episodes
@@ -202,7 +202,7 @@ def work(rank, args, master_net, optimizer=None):
             if args.train:
                 summary.add_scalar_value('Losses/Loss_{}'.format(rank), float(loss.data.numpy()))
                 summary.add_scalar_value('Losses/Entory_{}'.format(rank), float(entropy.data.numpy()))
-
+            summary.to_zip(summary_file)
         episodes += 1
         master_net.episodes += 1
 

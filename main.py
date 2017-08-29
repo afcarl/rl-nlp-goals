@@ -8,6 +8,7 @@ import numpy as np
 import helper
 from train import work
 from model import DFP_Network
+from pycrayon import CrayonClient
 
 
 OFFSETS = [1, 2, 4, 8, 16, 32]      # Set of temporal offsets
@@ -47,15 +48,17 @@ if __name__ == '__main__':
                              num_measurements=args.num_measurements,
                              is_master=True)
     master_net.share_memory()
+    cc = CrayonClient(hostname="localhost")
+    # cc.remove_all_experiments()
 
     processes = []
     # p = mp.Process(target=work, args=(0, args, master_net, exp_buff, optimizer))      eval net
     # p.start()
     # processes.append(p)
 
-    # for rank in range(0, args.num_processes):
-    for rank in range(0, 1):
-        p = mp.Process(target=work, args=(rank, args, master_net, None))
+    for rank in range(0, args.num_processes):
+    # for rank in range(0, 1):
+        p = mp.Process(target=work, args=(rank, args, master_net, cc, None))
         p.start()
         processes.append(p)
 
